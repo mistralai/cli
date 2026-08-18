@@ -7,16 +7,13 @@ source lives in the `mistralai/dashboard` monorepo under `ts/cli/mistral`, and
 each release is built and published automatically from there.
 
 This repository hosts `mistral` CLI releases exclusively. The installer fetches
-the _latest_ release, so publishing any unrelated release here would break
-installs.
+the _latest_ release by default, so publishing any unrelated release here would
+break installs.
 
 ## Install
 
-While the repository is private, install with the GitHub CLI (`gh`), which uses
-your existing GitHub authentication:
-
 ```sh
-bash <(gh api -H "Accept: application/vnd.github.raw" repos/mistralai/cli/contents/install.sh)
+curl -fsSL https://raw.githubusercontent.com/mistralai/cli/main/install.sh | bash
 ```
 
 The installer detects your platform, downloads the matching binary and
@@ -26,18 +23,28 @@ to `~/.mistral/bin/mistral`, and prints PATH instructions if needed.
 Override the install location with `MISTRAL_INSTALL_DIR`:
 
 ```sh
-MISTRAL_INSTALL_DIR="$HOME/.local/bin" bash <(gh api -H "Accept: application/vnd.github.raw" repos/mistralai/cli/contents/install.sh)
+curl -fsSL https://raw.githubusercontent.com/mistralai/cli/main/install.sh | MISTRAL_INSTALL_DIR="$HOME/.local/bin" bash
+```
+
+Pin a specific release with `MISTRAL_VERSION` (plain `X.Y.Z`); unset installs
+the latest:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/mistralai/cli/main/install.sh | MISTRAL_VERSION=0.2.0 bash
 ```
 
 ## Upgrade
 
-The installer always fetches the _latest_ release, so upgrading is the same
-command as installing — re-run it and it overwrites the existing binary in
-place:
+Upgrading is the same command as installing — re-run it and it overwrites the
+existing binary in place:
 
 ```sh
-bash <(gh api -H "Accept: application/vnd.github.raw" repos/mistralai/cli/contents/install.sh)
+curl -fsSL https://raw.githubusercontent.com/mistralai/cli/main/install.sh | bash
 ```
+
+To roll back to a known-good release, re-run it with `MISTRAL_VERSION` set.
+Releases are immutable, so a bad version is never republished under the same
+number.
 
 ## Supported platforms
 
@@ -53,15 +60,17 @@ bash <(gh api -H "Accept: application/vnd.github.raw" repos/mistralai/cli/conten
 Each release ships a `checksums.txt` with a SHA-256 line per binary:
 
 ```sh
-gh release download --repo mistralai/cli --pattern 'mistral-*' --pattern 'checksums.txt'
-sha256sum -c checksums.txt        # Linux
-shasum -a 256 -c checksums.txt    # macOS
+base=https://github.com/mistralai/cli/releases/latest/download
+curl -fsSLO "$base/mistral-darwin-arm64"   # your platform's asset
+curl -fsSLO "$base/checksums.txt"
+sha256sum --ignore-missing -c checksums.txt      # Linux
+shasum -a 256 --ignore-missing -c checksums.txt  # macOS
 ```
 
 `checksums.txt` catches incomplete or corrupted downloads. It ships in the same
 release as the binaries, so it is not an independent guarantee against a
-malicious publisher — publisher integrity rests on the private repo and your
-`gh` authentication.
+malicious publisher — publisher integrity rests on write access to the release
+repository.
 
 ## Uninstall
 

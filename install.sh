@@ -26,6 +26,10 @@ sha256_of() {
   fi
 }
 
+download() {
+  curl -fsSL --retry 3 -o "$2" "$1"
+}
+
 detect_asset() {
   local os arch
   case "$(uname -s)" in
@@ -42,41 +46,38 @@ detect_asset() {
 }
 
 main() {
-  if ! command -v gh >/dev/null 2>&1; then
-    error "GitHub CLI (gh) is required. Install from https://cli.github.com then run 'gh auth login'."
-    exit 1
-  fi
-  if ! gh auth status >/dev/null 2>&1; then
-    error "GitHub CLI is not authenticated. Run 'gh auth login' with an account that has access to ${REPO}."
-    exit 1
-  fi
-
   local asset
   asset="$(detect_asset)"
   info "Detected platform asset: ${asset}"
+
+  local version base
+  version="${MISTRAL_VERSION:-}"
+  if [[ -n "$version" ]]; then
+    if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+      error "MISTRAL_VERSION must be plain X.Y.Z, got '${version}'"
+      exit 1
+    fi
+    base="https://github.com/${REPO}/releases/download/cli/v${version}"
+    info "Downloading ${asset} v${version} from ${REPO}..."
+  else
+    base="https://github.com/${REPO}/releases/latest/download"
+    info "Downloading latest ${asset} from ${REPO}..."
+  fi
 
   local tmp
   tmp="$(mktemp -d)"
   trap "rm -rf $(printf '%q' "$tmp")" EXIT
 
-  info "Downloading latest ${asset} from ${REPO}..."
-  if ! gh release download \
-    --repo "$REPO" \
-    --pattern "$asset" \
-    --pattern "checksums.txt" \
-    --dir "$tmp" \
-    --clobber; then
-    error "Failed to download from ${REPO}. Confirm your gh account has access to ${REPO}."
+  if ! download "${base}/${asset}" "$tmp/$asset"; then
+    error "Failed to download ${base}/${asset}"
+    if [[ -n "$version" ]]; then
+      error "Confirm release cli/v${version} exists: https://github.com/${REPO}/releases"
+    fi
     exit 1
   fi
 
-  if [[ ! -f "$tmp/$asset" ]]; then
-    error "Downloaded asset not found: ${asset}"
-    exit 1
-  fi
-
-  if [[ ! -f "$tmp/checksums.txt" ]]; then
-    error "checksums.txt not found in release"
+  if ! download "${base}/checksums.txt" "$tmp/checksums.txt"; then
+    error "Failed to download ${base}/checksums.txt"
     exit 1
   fi
 
