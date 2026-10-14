@@ -13,24 +13,32 @@ break installs.
 ## Install
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/mistralai/cli/main/install.sh | bash
+curl -fsSL https://mistral.ai/cli/install.sh | bash
 ```
 
 The installer detects your platform, downloads the matching binary and
 `checksums.txt` from the latest release, verifies the SHA-256 checksum, installs
 to `~/.mistral/bin/mistral`, and prints PATH instructions if needed.
 
+`mistral apps` needs `bun`. If `bun` is not on your PATH, the installer asks whether to run the official bun installer, pinned to the bun version the CLI is built with. If you decline, or no terminal is attached, it prints the bun install command instead.
+
+`MISTRAL_INSTALL_BUN=0` never installs bun and only prints the command. To install bun without asking, for example in CI or from a coding agent, set `MISTRAL_INSTALL_BUN=1`:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/mistralai/cli/main/install.sh | MISTRAL_INSTALL_BUN=1 bash
+```
+
 Override the install location with `MISTRAL_INSTALL_DIR`:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/mistralai/cli/main/install.sh | MISTRAL_INSTALL_DIR="$HOME/.local/bin" bash
+curl -fsSL https://mistral.ai/cli/install.sh | MISTRAL_INSTALL_DIR="$HOME/.local/bin" bash
 ```
 
 Pin a specific release with `MISTRAL_VERSION` (plain `X.Y.Z`); unset installs
 the latest:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/mistralai/cli/main/install.sh | MISTRAL_VERSION=0.2.0 bash
+curl -fsSL https://mistral.ai/cli/install.sh | MISTRAL_VERSION=0.2.0 bash
 ```
 
 ## Upgrade
@@ -39,12 +47,46 @@ Upgrading is the same command as installing — re-run it and it overwrites the
 existing binary in place:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/mistralai/cli/main/install.sh | bash
+curl -fsSL https://mistral.ai/cli/install.sh | bash
 ```
 
 To roll back to a known-good release, re-run it with `MISTRAL_VERSION` set.
 Releases are immutable, so a bad version is never republished under the same
 number.
+
+## Shell completions
+
+The CLI prints a static completion script for your shell with `--completions`. The installer prints the command for your current shell when it finishes, but does not add completions to your shell profile itself. The bash line runs the installed CLI each time a shell starts, so it stays current; re-run the zsh or fish command after an upgrade so new commands complete.
+
+Bash: add this line to `~/.bashrc`:
+
+```sh
+command -v mistral >/dev/null && eval "$(mistral --completions bash)"
+```
+
+Zsh: write the script to a directory on your `fpath`, then add that directory in `~/.zshrc` before `compinit` runs:
+
+```sh
+mkdir -p ~/.zsh/completions && mistral --completions zsh > ~/.zsh/completions/_mistral
+```
+
+```sh
+fpath=(~/.zsh/completions $fpath)
+```
+
+If your `~/.zshrc` doesn't run `compinit` already (plain zsh, including the macOS default, doesn't), add this after the `fpath` line:
+
+```sh
+autoload -Uz compinit && compinit
+```
+
+Fish:
+
+```sh
+mkdir -p ~/.config/fish/completions && mistral --completions fish > ~/.config/fish/completions/mistral.fish
+```
+
+Open a new shell for the completions to load.
 
 ## Supported platforms
 

@@ -3,6 +3,7 @@ set -euo pipefail
 
 REPO="mistralai/cli"
 INSTALL_DIR="${MISTRAL_INSTALL_DIR:-$HOME/.mistral/bin}"
+BUN_VERSION="1.4.0"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -160,6 +161,41 @@ setup_path() {
   info "Restart your shell or run: source ${profile}"
 }
 
+print_bun_instructions() {
+  warning "\`mistral apps\` needs bun. Install it with:"
+  echo "  curl -fsSL https://bun.sh/install | bash -s \"bun-v${BUN_VERSION}\""
+}
+
+setup_bun() {
+  local tmp="$1" bun_dir="${BUN_INSTALL:-$HOME/.bun}/bin"
+
+  if command -v bun >/dev/null 2>&1; then
+    return
+  fi
+
+  if [[ -x "$bun_dir/bun" ]]; then
+    warning "bun is installed in ${bun_dir}, which is not on your PATH. Restart your shell or add it to your PATH."
+    return
+  fi
+
+  if [[ "${MISTRAL_INSTALL_BUN:-}" == 0 ]]; then
+    print_bun_instructions
+    return
+  fi
+
+  if [[ "${MISTRAL_INSTALL_BUN:-}" != 1 ]] &&
+    ! confirm "bun is not installed and \`mistral apps\` needs it. Install bun ${BUN_VERSION} from bun.sh?"; then
+    print_bun_instructions
+    return
+  fi
+
+  if ! download "https://bun.sh/install" "$tmp/bun-install.sh" ||
+    ! bash "$tmp/bun-install.sh" "bun-v${BUN_VERSION}"; then
+    warning "Could not install bun."
+    print_bun_instructions
+  fi
+}
+
 print_next_steps() {
   echo
   info "Next steps:"
@@ -168,10 +204,38 @@ print_next_steps() {
   echo "  mistral apps init    Scaffold your first app"
   echo
   echo "  mistral --help for everything else."
-  echo "  Shell completions: mistral --completions <bash|zsh|fish|sh>"
+  print_completion_hint
+}
+
+print_completion_hint() {
+  case "$(shell_name)" in
+    bash)
+      # Guarded eval so completions track CLI upgrades and a missing binary stays silent at shell start.
+      echo "  Shell completions, add to ~/.bashrc:"
+      echo "    command -v mistral >/dev/null && eval \"\$(mistral --completions bash)\""
+      ;;
+    zsh)
+      echo "  Shell completions:"
+      echo "    mkdir -p ~/.zsh/completions && mistral --completions zsh > ~/.zsh/completions/_mistral"
+      echo "    # then in ~/.zshrc, before any compinit: fpath=(~/.zsh/completions \$fpath)"
+      echo "    # if ~/.zshrc doesn't run compinit, add after fpath: autoload -Uz compinit && compinit"
+      ;;
+    fish)
+      echo "  Shell completions:"
+      echo "    mkdir -p ~/.config/fish/completions && mistral --completions fish > ~/.config/fish/completions/mistral.fish"
+      ;;
+    *)
+      echo "  Shell completions: mistral --completions <bash|zsh|fish|sh>"
+      ;;
+  esac
 }
 
 main() {
+  if [[ ! "${MISTRAL_INSTALL_BUN:-}" =~ ^[01]?$ ]]; then
+    error "MISTRAL_INSTALL_BUN must be 0 or 1, got '${MISTRAL_INSTALL_BUN}'"
+    exit 1
+  fi
+
   local asset
   asset="$(detect_asset)"
   info "Detected platform asset: ${asset}"
@@ -235,6 +299,7 @@ main() {
       ;;
   esac
 
+  setup_bun "$tmp"
   print_next_steps
 }
 
