@@ -45,6 +45,132 @@ detect_asset() {
   echo "mistral-${os}-${arch}"
 }
 
+MARKER_START="# >>> Mistral >>>"
+MARKER_END="# <<< Mistral <<<"
+
+shell_name() {
+  local shell_path="${SHELL:-}"
+  echo "${shell_path##*/}"
+}
+
+profile_for_shell() {
+  case "$(shell_name)" in
+    zsh)
+      echo "${ZDOTDIR:-$HOME}/.zshrc"
+      ;;
+    bash)
+      if [[ -f "$HOME/.bashrc" ]]; then
+        echo "$HOME/.bashrc"
+      else
+        echo "$HOME/.bash_profile"
+      fi
+      ;;
+    fish)
+      echo "$HOME/.config/fish/config.fish"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+path_line_for_shell() {
+  case "$(shell_name)" in
+    fish) echo "fish_add_path \"${INSTALL_DIR}\"" ;;
+    *)    echo "export PATH=\"${INSTALL_DIR}:\$PATH\"" ;;
+  esac
+}
+
+print_path_instructions() {
+  warning "${INSTALL_DIR} is not on your PATH. Add it to your shell profile:"
+  echo "  $1"
+}
+
+tty_available() {
+  { : >/dev/tty; } 2>/dev/null
+}
+
+confirm() {
+  local answer
+  tty_available || return 1
+  printf '%b' "${BLUE}[INPUT]${NC} $1 [Y/n] " >/dev/tty
+  read -r answer </dev/tty || return 1
+  case "$answer" in
+    "" | [Yy] | [Yy][Ee][Ss]) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+strip_paired_block() {
+  awk -v start="$MARKER_START" -v end="$MARKER_END" '
+    !holding && $0 == start { holding = 1; held = ""; next }
+    holding && $0 == end { holding = 0; held = ""; next }
+    holding { held = held == "" ? $0 : held "\n" $0; next }
+    { print }
+    END { if (holding && held != "") print held }
+  ' "$1"
+}
+
+write_path_block() {
+  local profile="$1" line="$2" rewritten
+  mkdir -p "$(dirname "$profile")" || return 1
+  touch "$profile" || return 1
+  rewritten="$(mktemp)" || return 1
+
+  if ! { strip_paired_block "$profile" >"$rewritten" &&
+    printf '%s\n%s\n%s\n' "$MARKER_START" "$line" "$MARKER_END" >>"$rewritten"; }; then
+    rm -f "$rewritten"
+    return 1
+  fi
+
+  if ! cat "$rewritten" >"$profile"; then
+    warning "${profile} may be incomplete; a complete copy is at ${rewritten}"
+    return 1
+  fi
+
+  rm -f "$rewritten"
+}
+
+setup_path() {
+  local profile line
+  line="$(path_line_for_shell)"
+
+  if [[ -n "${MISTRAL_NO_MODIFY_PATH:-}" ]]; then
+    print_path_instructions "$line"
+    return
+  fi
+
+  if ! profile="$(profile_for_shell)"; then
+    print_path_instructions "$line"
+    return
+  fi
+
+  if ! confirm "Add ${INSTALL_DIR} to your PATH in ${profile}?"; then
+    print_path_instructions "$line"
+    return
+  fi
+
+  if ! write_path_block "$profile" "$line"; then
+    warning "Could not write to ${profile}."
+    print_path_instructions "$line"
+    return
+  fi
+
+  success "Added ${INSTALL_DIR} to your PATH in ${profile}"
+  info "Restart your shell or run: source ${profile}"
+}
+
+print_next_steps() {
+  echo
+  info "Next steps:"
+  echo "  mistral login        Sign in through your browser"
+  echo "  mistral context      Pick the organization and workspace to work in"
+  echo "  mistral apps init    Scaffold your first app"
+  echo
+  echo "  mistral --help for everything else."
+  echo "  Shell completions: mistral --completions <bash|zsh|fish|sh>"
+}
+
 main() {
   local asset
   asset="$(detect_asset)"
@@ -105,10 +231,11 @@ main() {
       success "mistral is on your PATH: $("$INSTALL_DIR/mistral" --version)"
       ;;
     *)
-      warning "${INSTALL_DIR} is not on your PATH. Add it to your shell profile:"
-      echo "  export PATH=\"${INSTALL_DIR}:\$PATH\""
+      setup_path
       ;;
   esac
+
+  print_next_steps
 }
 
 main "$@"
