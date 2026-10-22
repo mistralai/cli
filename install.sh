@@ -230,7 +230,301 @@ print_completion_hint() {
   esac
 }
 
+# --- Uninstall (MISTRAL_UNINSTALL=1) ---
+# Best effort and idempotent. This public script never names the internal
+# build's binary or installer variables (see update-channel.ts); whatever else
+# is left in the install directory is listed instead. Everything below runs
+# under `set -euo pipefail` inherited from the top of the file, so every
+# command that may legitimately fail sits in an `if` or behind `||`.
+
+UNINSTALL_PATH_BLOCKS_REMOVED=0
+
+# Paths are printed with %s so a backslash or % in them is never interpreted.
+uninstall_info() { printf '%b[INFO]%b %s\n' "$BLUE" "$NC" "$1"; }
+uninstall_warn() { printf '%b[WARNING]%b %s\n' "$YELLOW" "$NC" "$1" >&2; }
+
+# Like `confirm`, but the default is no: only y/yes answers it. Without a
+# terminal, or when reading fails, the answer is no.
+confirm_default_no() {
+  local answer
+  tty_available || return 1
+  printf '%b[INPUT]%b %s [y/N] ' "$BLUE" "$NC" "$1" >/dev/tty
+  read -r answer </dev/tty || return 1
+  case "$answer" in
+    [Yy] | [Yy][Ee][Ss]) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+uninstall_trim() {
+  local value="$1"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  printf '%s' "$value"
+}
+
+# Same precedence as the CLI: $MISTRAL_CONFIG_DIR, $XDG_CONFIG_HOME/mistral, ~/.config/mistral.
+uninstall_config_dir() {
+  local explicit xdg
+  explicit="$(uninstall_trim "${MISTRAL_CONFIG_DIR:-}")"
+  xdg="$(uninstall_trim "${XDG_CONFIG_HOME:-}")"
+  if [[ -n "$explicit" ]]; then
+    printf '%s\n' "$explicit"
+  elif [[ -n "$xdg" ]]; then
+    printf '%s\n' "$xdg/mistral"
+  else
+    printf '%s\n' "$HOME/.config/mistral"
+  fi
+}
+
+# Succeeds for a canonical path that must never be deleted: /, $HOME, any
+# directory containing $HOME, and $HOME/.mistral (logical and physical $HOME).
+uninstall_is_protected_dir() {
+  local canon="$1" home home_physical candidate
+  home="$HOME"
+  while [[ "$home" != "/" && "$home" == */ ]]; do home="${home%/}"; done
+  home_physical="$(CDPATH='' cd -- "$home" 2>/dev/null && pwd -P)" || home_physical="$home"
+
+  if [[ "$canon" == "/" ]]; then
+    return 0
+  fi
+  for candidate in "$home" "$home_physical"; do
+    if [[ "$canon" == "$candidate/.mistral" ]]; then
+      return 0
+    fi
+    case "$candidate/" in
+      "$canon"/*) return 0 ;;
+    esac
+  done
+  return 1
+}
+
+# Every file the installer can write, not only the one for the current $SHELL:
+# the shell or ZDOTDIR may differ from install time. One path per line.
+uninstall_rc_files() {
+  printf '%s\n' "${ZDOTDIR:-$HOME}/.zshrc"
+  if [[ "${ZDOTDIR:-$HOME}" != "$HOME" ]]; then
+    printf '%s\n' "$HOME/.zshrc"
+  fi
+  printf '%s\n' "$HOME/.bashrc" "$HOME/.bash_profile" "$HOME/.config/fish/config.fish"
+}
+
+uninstall_sign_out() {
+  local bin="$INSTALL_DIR/mistral"
+  if [[ ! -f "$bin" || ! -x "$bin" ]]; then
+    uninstall_warn "Skipping sign-out: no mistral binary at ${bin}. If you signed in, delete the mistral-cli keychain item by hand."
+    return 0
+  fi
+  uninstall_info "Signing out (can take up to a minute offline)..."
+  # </dev/null keeps the child from reading the rest of a piped script.
+  if ! MISTRAL_DISABLE_UPDATE_CHECK=1 MISTRAL_DISABLE_FLAG_REFRESH=1 "$bin" logout </dev/null; then
+    uninstall_warn "mistral logout failed; continuing. If you signed in, delete the mistral-cli keychain item by hand."
+  fi
+  return 0
+}
+
+uninstall_remove_file() {
+  local file="$1"
+  if [[ ! -e "$file" && ! -L "$file" ]]; then
+    return 0
+  fi
+  if ! rm -f -- "$file"; then
+    uninstall_warn "Could not remove ${file}"
+    return 1
+  fi
+  uninstall_info "Removed ${file}"
+  return 0
+}
+
+uninstall_strip_path_block() {
+  local file="$1" rewritten status=0
+  if [[ ! -f "$file" ]]; then
+    return 0
+  fi
+  grep -qxF "$MARKER_START" "$file" 2>/dev/null || status=$?
+  if [[ "$status" == 1 ]]; then
+    return 0
+  fi
+  if [[ "$status" != 0 ]]; then
+    uninstall_warn "Could not read ${file}; remove the Mistral PATH block by hand."
+    return 1
+  fi
+  # An explicit template: BSD mktemp ignores TMPDIR without one.
+  if ! rewritten="$(mktemp "${TMPDIR:-/tmp}/mistral-rc.XXXXXX")"; then
+    uninstall_warn "Could not create a temporary file to edit ${file}."
+    return 1
+  fi
+  if ! strip_paired_block "$file" >"$rewritten"; then
+    rm -f "$rewritten" || true
+    uninstall_warn "Could not read ${file}; remove the Mistral PATH block by hand."
+    return 1
+  fi
+  if ! cat "$rewritten" >"$file"; then
+    uninstall_warn "${file} may be incomplete; a complete copy is at ${rewritten}"
+    return 1
+  fi
+  rm -f "$rewritten" || true
+  UNINSTALL_PATH_BLOCKS_REMOVED=1
+  uninstall_info "Removed the Mistral PATH block from ${file}"
+  return 0
+}
+
+# Returns 0 when the directory was removed or deliberately kept, 1 when removing failed.
+uninstall_remove_config_dir() {
+  local raw="${MISTRAL_CONFIG_DIR:-}" dir canon
+  if [[ -n "$raw" && -z "$(uninstall_trim "$raw")" ]]; then
+    uninstall_warn "MISTRAL_CONFIG_DIR is blank; not touching the config directory."
+    return 0
+  fi
+  dir="$(uninstall_config_dir)"
+  while [[ "$dir" != "/" && "$dir" == */ ]]; do dir="${dir%/}"; done
+
+  if [[ -L "$dir" ]]; then
+    uninstall_warn "${dir} is a symbolic link; not deleting it or what it points to."
+    printf '  To drop only the link: rm -f %q\n' "$dir"
+    return 0
+  fi
+  if [[ ! -d "$dir" ]]; then
+    return 0
+  fi
+  if ! canon="$(CDPATH='' cd -- "$dir" 2>/dev/null && pwd -P)" || [[ -z "$canon" ]]; then
+    uninstall_warn "Could not resolve ${dir}; not deleting it."
+    return 1
+  fi
+  if uninstall_is_protected_dir "$canon"; then
+    uninstall_warn "Refusing to delete ${canon}: it is, or contains, your home directory."
+    return 0
+  fi
+
+  if confirm_default_no "Delete ${canon}? It holds your API key, feature-flag overrides and caches."; then
+    if ! rm -rf -- "$canon"; then
+      uninstall_warn "Could not fully remove ${canon}"
+      return 1
+    fi
+    uninstall_info "Removed ${canon}"
+    return 0
+  fi
+  uninstall_info "Kept ${canon}. Remove it with:"
+  printf '  rm -rf %q\n' "$canon"
+  return 0
+}
+
+# Lists, never deletes: other tools or your own data may depend on these.
+uninstall_list_leftovers() {
+  local bun_home="${BUN_INSTALL:-$HOME/.bun}" registry="$HOME/.mistral/registry"
+  local file hits name containers="" volumes="" found=0
+
+  while IFS= read -r file; do
+    if [[ ! -f "$file" ]]; then
+      continue
+    fi
+    if hits="$(grep -nF -e "$INSTALL_DIR" -e ".mistral/bin" -e "mistral --completions" -e "BUN_INSTALL" -e ".bun/" -e "$bun_home" "$file" 2>/dev/null)"; then
+      if [[ "$found" == 0 ]]; then
+        uninstall_info "Not removed (other tools or your data may use these):"
+        found=1
+      fi
+      printf '  %s still has lines about mistral or bun (remove them by hand if unwanted):\n' "$file"
+      printf '%s\n' "$hits" | sed 's/^/    /'
+    fi
+  done < <(uninstall_rc_files)
+
+  if [[ -d "$registry" ]]; then
+    if [[ "$found" == 0 ]]; then
+      uninstall_info "Not removed (other tools or your data may use these):"
+      found=1
+    fi
+    printf '  Pulled skills and prompts: %s\n' "$registry"
+    printf '    rm -rf %q\n' "$registry"
+  fi
+
+  if [[ -d "$bun_home" ]]; then
+    if [[ "$found" == 0 ]]; then
+      uninstall_info "Not removed (other tools or your data may use these):"
+      found=1
+    fi
+    printf '  bun (other tools may use it): %s\n' "$bun_home"
+    printf '    rm -rf %q\n' "$bun_home"
+  fi
+
+  if command -v docker >/dev/null 2>&1; then
+    containers="$(docker ps -a --filter 'name=^mistral-dev-' --format '{{.Names}}' </dev/null 2>/dev/null || true)"
+    volumes="$(docker volume ls --filter 'name=^mistral-dev-' --format '{{.Name}}' </dev/null 2>/dev/null || true)"
+  fi
+  if [[ -n "$containers" || -n "$volumes" ]]; then
+    if [[ "$found" == 0 ]]; then
+      uninstall_info "Not removed (other tools or your data may use these):"
+      found=1
+    fi
+    echo "  \`mistral apps dev\` Docker containers and volumes (the volumes hold your local database data):"
+    if [[ -n "$containers" ]]; then
+      while IFS= read -r name; do
+        printf '    docker rm %q\n' "$name"
+      done <<<"$containers"
+    fi
+    if [[ -n "$volumes" ]]; then
+      while IFS= read -r name; do
+        printf '    docker volume rm %q\n' "$name"
+      done <<<"$volumes"
+    fi
+  fi
+  return 0
+}
+
+uninstall() {
+  local failed=0 file remaining
+
+  if [[ "${MISTRAL_UNINSTALL}" != 1 ]]; then
+    printf '%b[ERROR]%b MISTRAL_UNINSTALL must be 0 or 1, got '"'"'%s'"'"'\n' "$RED" "$NC" "$MISTRAL_UNINSTALL" >&2
+    exit 1
+  fi
+  if [[ -z "$HOME" ]]; then
+    error "HOME is empty; refusing to uninstall."
+    exit 1
+  fi
+
+  uninstall_sign_out
+
+  uninstall_remove_file "$INSTALL_DIR/mistral" || failed=1
+  if [[ "$INSTALL_DIR" == "$HOME/.mistral/bin" ]]; then
+    if rmdir "$INSTALL_DIR" 2>/dev/null; then
+      rmdir "$HOME/.mistral" 2>/dev/null || true
+    fi
+  fi
+
+  while IFS= read -r file; do
+    uninstall_strip_path_block "$file" || failed=1
+  done < <(uninstall_rc_files)
+
+  for file in "$HOME/.zsh/completions/_mistral" "$HOME/.config/fish/completions/mistral.fish"; do
+    uninstall_remove_file "$file" || failed=1
+  done
+
+  uninstall_remove_config_dir || failed=1
+
+  remaining="$(ls -A "$INSTALL_DIR" 2>/dev/null || true)"
+  if [[ -n "$remaining" ]]; then
+    if [[ "$UNINSTALL_PATH_BLOCKS_REMOVED" == 1 ]]; then
+      uninstall_info "PATH block removed; entries below are no longer on PATH."
+    fi
+    uninstall_info "Left in ${INSTALL_DIR}:"
+    printf '%s\n' "$remaining" | sed 's/^/  /'
+  fi
+  uninstall_list_leftovers
+
+  if [[ "$failed" == 1 ]]; then
+    error "Uninstall finished with errors."
+    exit 1
+  fi
+  success "mistral is uninstalled. Open a new shell to drop it from your PATH."
+  return 0
+}
+
 main() {
+  if [[ -n "${MISTRAL_UNINSTALL:-}" && "${MISTRAL_UNINSTALL}" != 0 ]]; then
+    uninstall
+    return
+  fi
+
   if [[ ! "${MISTRAL_INSTALL_BUN:-}" =~ ^[01]?$ ]]; then
     error "MISTRAL_INSTALL_BUN must be 0 or 1, got '${MISTRAL_INSTALL_BUN}'"
     exit 1

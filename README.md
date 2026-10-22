@@ -116,8 +116,70 @@ repository.
 
 ## Uninstall
 
+Run the installer in uninstall mode. If you installed to a custom directory,
+pass the same `MISTRAL_INSTALL_DIR` you used then (it defaults to
+`~/.mistral/bin`):
+
 ```sh
-rm -f ~/.mistral/bin/mistral
+curl -fsSL https://mistral.ai/cli/install.sh | MISTRAL_UNINSTALL=1 bash
 ```
 
-Then remove `~/.mistral/bin` from your PATH if you added it.
+In order, it:
+
+1. Runs `mistral logout`, which revokes your session and deletes the
+   `mistral-cli` keychain item. This comes first because it needs the binary
+   and the config directory. If it fails or takes a while offline (up to a
+   minute), the uninstall carries on.
+2. Removes the `mistral` binary.
+3. Removes the `# >>> Mistral >>>` block from `~/.zshrc` (or
+   `$ZDOTDIR/.zshrc`), `~/.bashrc`, `~/.bash_profile` and
+   `~/.config/fish/config.fish`.
+4. Deletes the completion files `~/.zsh/completions/_mistral` and
+   `~/.config/fish/completions/mistral.fish`.
+5. Asks before deleting the config directory (`$MISTRAL_CONFIG_DIR`, else
+   `$XDG_CONFIG_HOME/mistral`, else `~/.config/mistral`). It holds your API
+   key, feature-flag overrides, and caches. The default answer is no, and it
+   keeps the directory when no terminal is attached, printing the `rm -rf`
+   command instead. It never deletes your home directory or a directory
+   containing it, and leaves a symbolic link in place.
+
+It then lists, without deleting, what other tools or your own data may depend
+on:
+
+- bun in `~/.bun`, if the installer offered it, and any lines bun's installer
+  added to your shell profile.
+- `mistral apps dev` Postgres containers and volumes named `mistral-dev-*`. The
+  volumes hold your local database data.
+- Pulled skills and prompts in `~/.mistral/registry`.
+- Remaining lines in your shell profile that mention the install directory,
+  such as the bash completion line.
+- Anything else left in the install directory.
+
+Open a new shell afterwards. Running the command again is safe.
+
+### By hand
+
+Older installers ignore `MISTRAL_UNINSTALL`; if the one-liner starts
+downloading, press Ctrl-C and use these steps instead:
+
+```sh
+mistral logout
+rm -f ~/.mistral/bin/mistral
+rm -f ~/.zsh/completions/_mistral ~/.config/fish/completions/mistral.fish
+rm -rf ~/.config/mistral
+```
+
+Then delete the lines from `# >>> Mistral >>>` to `# <<< Mistral <<<` in your
+shell profile (`~/.zshrc`, `~/.bashrc`, `~/.bash_profile` or
+`~/.config/fish/config.fish`), and the `mistral --completions bash` line if you
+added it to `~/.bashrc`. If you set `MISTRAL_INSTALL_DIR` or
+`MISTRAL_CONFIG_DIR`, use those paths instead.
+
+Optionally, remove the rest:
+
+```sh
+docker ps -a --filter 'name=^mistral-dev-'        # list, then: docker rm <container>
+docker volume ls --filter 'name=^mistral-dev-'    # list, then: docker volume rm <volume>
+rm -rf ~/.mistral/registry
+rm -rf ~/.bun    # only if nothing else uses bun
+```
