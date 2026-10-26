@@ -201,7 +201,7 @@ print_next_steps() {
   info "Next steps:"
   echo "  mistral login        Sign in through your browser"
   echo "  mistral context      Pick the organization and workspace to work in"
-  echo "  mistral apps init    Scaffold your first app"
+  echo "  mistral init         Scaffold a workflow or an app"
   echo
   echo "  mistral --help for everything else."
   print_completion_hint
