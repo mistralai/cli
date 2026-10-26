@@ -41,6 +41,8 @@ the latest:
 curl -fsSL https://mistral.ai/cli/install.sh | MISTRAL_VERSION=0.2.0 bash
 ```
 
+The CLI stores its config, credentials and feature-flag overrides under `$MISTRAL_CONFIG_DIR`, else `$XDG_CONFIG_HOME/mistral`, else `~/.config/mistral`.
+
 ## Upgrade
 
 Upgrading is the same command as installing — re-run it and it overwrites the
