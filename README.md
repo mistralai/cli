@@ -41,8 +41,6 @@ the latest:
 curl -fsSL https://mistral.ai/cli/install.sh | MISTRAL_VERSION=0.2.0 bash
 ```
 
-The CLI stores its config, credentials and feature-flag overrides under `$MISTRAL_CONFIG_DIR`, else `$XDG_CONFIG_HOME/mistral`, else `~/.config/mistral`.
-
 ## Upgrade
 
 Upgrading is the same command as installing — re-run it and it overwrites the
@@ -129,7 +127,7 @@ curl -fsSL https://mistral.ai/cli/install.sh | MISTRAL_UNINSTALL=1 bash
 In order, it:
 
 1. Runs `mistral logout`, which revokes your session and deletes the
-   `mistral-cli` keychain item. This comes first because it needs the binary
+   `mistral-cli` keychain item (on macOS through `/usr/bin/security`). This comes first because it needs the binary
    and the config directory. If it fails or takes a while offline (up to a
    minute), the uninstall carries on.
 2. Removes the `mistral` binary.
