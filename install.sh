@@ -46,6 +46,23 @@ detect_asset() {
   echo "mistral-${os}-${arch}"
 }
 
+# Releases up to v0.18.0 ship macOS binaries whose signature no longer matches
+# their contents (bun cross-compiles them on Linux), and macOS kills such a
+# binary at launch with no output. Re-sign ad hoc, but only an invalid
+# signature, so a valid one is never replaced. Never fails the install.
+repair_macos_signature() {
+  local binary="$1"
+  [[ "$(uname -s)" == Darwin ]] || return 0
+  command -v codesign >/dev/null 2>&1 || return 0
+  codesign --verify --strict "$binary" >/dev/null 2>&1 && return 0
+  if codesign --force --sign - "$binary" >/dev/null 2>&1; then
+    info "Re-signed the binary ad hoc: its macOS signature was invalid"
+  else
+    warning "The binary's macOS signature is invalid and re-signing it failed."
+    warning "If mistral exits with no output, run: codesign --force --sign - ${INSTALL_DIR}/mistral"
+  fi
+}
+
 MARKER_START="# >>> Mistral >>>"
 MARKER_END="# <<< Mistral <<<"
 
@@ -579,6 +596,8 @@ main() {
     exit 1
   fi
   success "Checksum verified"
+
+  repair_macos_signature "$tmp/$asset"
 
   mkdir -p "$INSTALL_DIR"
   install -m 0755 "$tmp/$asset" "$INSTALL_DIR/mistral"

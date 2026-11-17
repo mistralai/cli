@@ -97,6 +97,24 @@ Open a new shell for the completions to load.
 | Linux | x86_64          | `mistral-linux-x64`    |
 | Linux | arm64 / aarch64 | `mistral-linux-arm64`  |
 
+## Troubleshooting
+
+### macOS 27: `mistral` exits at once with no output
+
+The macOS binaries of v0.18.0 and earlier carry an invalid code signature.
+macOS 27 stops such a binary at launch without a message (exit code 137);
+earlier macOS versions still run it. The installer now re-signs it, so
+re-running the install command fixes it. To fix
+an installed copy by hand (`~/.mistral/bin/mistral`, or the one in your
+`MISTRAL_INSTALL_DIR`):
+
+```sh
+codesign --force --sign - ~/.mistral/bin/mistral
+```
+
+A re-signed binary no longer matches its release's `checksums.txt` or
+attestation: verify the downloaded file, as below, not the installed one.
+
 ## Verify a download manually
 
 Each release ships a `checksums.txt` with a SHA-256 line per binary:
@@ -113,6 +131,21 @@ shasum -a 256 --ignore-missing -c checksums.txt  # macOS
 release as the binaries, so it is not an independent guarantee against a
 malicious publisher — publisher integrity rests on write access to the release
 repository.
+
+## Usage data
+
+`mistral apps` commands, and `mistral init`, `dev`, `deploy` and
+`workflows init`, send Mistral an event when they start and when they finish:
+the command, how it ended, how long it took, the CLI version and the app's ID.
+`init` and the `capability` commands also send the names of Mistral's own
+capabilities they add or remove. Events go out with your API key or sign-in, so
+they are linked to your Mistral account. The CLI never sends your code, files,
+environment variables or credentials.
+
+To turn it off, set `DO_NOT_TRACK=1` or `MISTRAL_TELEMETRY_OPT_OUT=1`, or add
+`"telemetryOptOut": true` to `config.json` in the CLI's config directory
+(`~/.config/mistral` by default). [Telemetry](https://docs.mistral.ai/studio/mistral-cli/telemetry)
+lists everything that is recorded.
 
 ## Uninstall
 
