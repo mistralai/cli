@@ -426,9 +426,43 @@ uninstall_remove_config_dir() {
   return 0
 }
 
+uninstall_global_skill_entries() {
+  awk '
+    /"path": "skills\// { name = $0; sub(/^[^"]*"path": "skills\//, "", name); sub(/".*$/, "", name); if (/\\/) name = ""; print "skill\t" name; next }
+    /"alsoIn": \[/ { also = ($0 !~ /\]/); next }
+    also && /^[[:space:]]*\]/ { also = 0; next }
+    also && !/\\/ { place = $0; sub(/^[^"]*"/, "", place); sub(/".*$/, "", place); print "also\t" name "\t" place }
+  ' "$1" 2>/dev/null || true
+}
+
+uninstall_is_skill_name() {
+  [[ -n "$1" && "$1" != */* && "$1" != "." && "$1" != ".." ]]
+}
+
+uninstall_is_home_place() {
+  [[ -n "$1" && "$1" != /* && "/$1/" != */../* ]]
+}
+
+uninstall_list_global_skills() {
+  local agents_skills="$1" agents_lock="$2" kind name place
+  printf '  Skills pulled with --global, listed in %s (other agents read %s too, so remove only these):\n' "$agents_lock" "$agents_skills"
+  while IFS=$'\t' read -r kind name place; do
+    if ! uninstall_is_skill_name "$name"; then
+      continue
+    fi
+    if [[ "$kind" == skill ]]; then
+      printf '    rm -rf %q\n' "$agents_skills/$name"
+    elif uninstall_is_home_place "$place"; then
+      printf '    rm %q\n' "$HOME/$place/$name"
+    fi
+  done < <(uninstall_global_skill_entries "$agents_lock")
+  printf '    rm %q\n' "$agents_lock"
+}
+
 # Lists, never deletes: other tools or your own data may depend on these.
 uninstall_list_leftovers() {
   local bun_home="${BUN_INSTALL:-$HOME/.bun}" registry="$HOME/.mistral/registry"
+  local agents_skills="$HOME/.agents/skills" agents_lock="$HOME/.agents/registry.lock.json"
   local file hits name containers="" volumes="" found=0
 
   while IFS= read -r file; do
@@ -450,8 +484,16 @@ uninstall_list_leftovers() {
       uninstall_info "Not removed (other tools or your data may use these):"
       found=1
     fi
-    printf '  Pulled skills and prompts: %s\n' "$registry"
+    printf '  Pulled prompts, and skills pulled before 0.12.0: %s\n' "$registry"
     printf '    rm -rf %q\n' "$registry"
+  fi
+
+  if [[ -f "$agents_lock" ]]; then
+    if [[ "$found" == 0 ]]; then
+      uninstall_info "Not removed (other tools or your data may use these):"
+      found=1
+    fi
+    uninstall_list_global_skills "$agents_skills" "$agents_lock"
   fi
 
   if [[ -d "$bun_home" ]]; then

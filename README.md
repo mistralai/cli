@@ -183,7 +183,10 @@ on:
   added to your shell profile.
 - `mistral apps dev` Postgres containers and volumes named `mistral-dev-*`. The
   volumes hold your local database data.
-- Pulled skills and prompts in `~/.mistral/registry`.
+- Pulled prompts in `~/.mistral/registry`, with any skill pulled before 0.12.0.
+- Skills pulled with `--global`: only the ones `~/.agents/registry.lock.json`
+  lists, in `~/.agents/skills/`, since other agents use that folder too, and
+  their entries in the folders you added with `--also-in`.
 - Remaining lines in your shell profile that mention the install directory,
   such as the bash completion line.
 - Anything else left in the install directory.
@@ -216,3 +219,7 @@ docker volume ls --filter 'name=^mistral-dev-'    # list, then: docker volume rm
 rm -rf ~/.mistral/registry
 rm -rf ~/.bun    # only if nothing else uses bun
 ```
+
+Skills pulled with `--global` live in `~/.agents/skills/`, which other agents
+use too: remove only the ones listed in `~/.agents/registry.lock.json`, their
+entries in the folders listed under `alsoIn` there, then the lockfile.
